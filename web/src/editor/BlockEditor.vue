@@ -2,15 +2,12 @@
 import { onBeforeUnmount, watch } from 'vue'
 import { EditorContent, useEditor, type Editor } from '@tiptap/vue-3'
 import { BubbleMenu } from '@tiptap/vue-3/menus'
-import StarterKit from '@tiptap/starter-kit'
-import Image from '@tiptap/extension-image'
-import { TaskItem, TaskList } from '@tiptap/extension-list'
-import { TableKit } from '@tiptap/extension-table'
 import { Placeholder } from '@tiptap/extensions'
 import { uploadImage, errorMessage } from '../api'
 import { toast } from '../utils'
 import { pickImage } from './commands'
 import { SlashCommands } from './slashCommands'
+import { schemaExtensions } from './schema'
 
 const props = defineProps<{ content: string; editable: boolean }>()
 const emit = defineEmits<{ update: [html: string] }>()
@@ -38,14 +35,7 @@ const editor = useEditor({
   content: props.content,
   editable: props.editable,
   extensions: [
-    StarterKit.configure({
-      heading: { levels: [1, 2, 3] },
-      link: { openOnClick: false, autolink: true, defaultProtocol: 'https', protocols: ['http', 'https', 'mailto'] },
-    }),
-    Image.configure({ inline: false }),
-    TaskList,
-    TaskItem.configure({ nested: true }),
-    TableKit.configure({ table: { resizable: false } }),
+    ...schemaExtensions,
     Placeholder.configure({
       placeholder: ({ node }) => (node.type.name === 'heading' ? '标题' : '输入 / 插入内容块'),
     }),

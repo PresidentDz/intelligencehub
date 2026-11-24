@@ -183,6 +183,14 @@ mark { background: #fff3b0; color: inherit; border-radius: 2px; }
 .modal-body { padding: 12px 20px; overflow-y: auto; }
 .modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px 16px; }
 form.modal-body .modal-foot { padding: 8px 0 4px; }
+
+/* Markdown import / export */
+.import-pick { display: flex; gap: 8px; margin: 12px 0; }
+.import-preview { list-style: none; margin: 0 0 12px; padding: 8px 10px; max-height: 220px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius); font-size: 13px; line-height: 1.8; }
+.menu-anchor { position: relative; }
+.menu-popover { position: absolute; top: 100%; right: 0; z-index: 30; min-width: 200px; padding: 4px; background: #fff; border-radius: 8px; box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.menu-popover button { border: 0; background: none; text-align: left; padding: 7px 10px; border-radius: var(--radius); font-size: 13px; white-space: nowrap; }
+.menu-popover button:hover { background: var(--hover); }
 .icon-grid, .icon-popover { display: flex; flex-wrap: wrap; gap: 4px; }
 .icon-choice { width: 34px; height: 34px; border: 1px solid transparent; border-radius: var(--radius); background: none; font-size: 18px; }
 .icon-choice:hover { background: var(--hover); }

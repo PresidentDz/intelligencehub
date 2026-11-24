@@ -54,6 +54,15 @@ export async function uploadImage(file: File): Promise<string> {
   return BASE + url
 }
 
+/** Matches the URL of an image uploaded to this knowledge base; group 1 is the stored file name. */
+export const UPLOADED_FILE = /\/api\/files\/([a-f0-9]{32}\.[a-z]{3,4})$/
+
+export async function downloadUploadedFile(name: string): Promise<Uint8Array> {
+  const res = await fetch(`${BASE}/api/files/${name}`, { credentials: 'include' })
+  if (!res.ok) throw new ApiError(res.status, `图片下载失败（${res.status}）`)
+  return new Uint8Array(await res.arrayBuffer())
+}
+
 export function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }

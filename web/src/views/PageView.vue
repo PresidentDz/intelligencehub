@@ -10,6 +10,8 @@ import BlockEditor from '../editor/BlockEditor.vue'
 import CommentPanel from '../components/CommentPanel.vue'
 import HistoryPanel from '../components/HistoryPanel.vue'
 import { createPage } from '../components/treeActions'
+import ImportDialog from '../components/ImportDialog.vue'
+import { exportPageMarkdown, exportZip } from '../transfer/exporter'
 
 const props = defineProps<{ spaceId: string; pageId: string }>()
 const spaces = useSpaces()
@@ -25,6 +27,30 @@ const status = ref<'saved' | 'dirty' | 'saving' | 'error' | 'conflict'>('saved')
 const panel = ref<'comments' | 'history' | null>(null)
 const iconPicker = ref(false)
 const editorRef = ref<InstanceType<typeof BlockEditor>>()
+const transferMenu = ref(false)
+const importOpen = ref(false)
+const exporting = ref(false)
+const hasChildren = computed(() => spaces.pages.some((p) => p.parentId === Number(props.pageId)))
+
+/** Exports this page as .md, or with its subpages as a .zip. Pending edits are saved first. */
+async function exportPage(withChildren: boolean) {
+  transferMenu.value = false
+  if (!page.value || exporting.value) return
+  exporting.value = true
+  try {
+    await save()
+    if (withChildren) {
+      const n = await exportZip(page.value.spaceId, page.value.id, title.value.trim() || '无标题', () => {})
+      toast(`已导出 ${n} 个页面`)
+    } else {
+      await exportPageMarkdown(page.value.spaceId, page.value.id)
+    }
+  } catch (e) {
+    toast(errorMessage(e), 'error')
+  } finally {
+    exporting.value = false
+  }
+}
 
 const canEdit = computed(() => !!page.value && page.value.myRole !== 'reader' && status.value !== 'conflict')
 const statusText = computed(() => ({
@@ -189,6 +215,15 @@ onBeforeRouteLeave(async () => {
           <button class="icon-btn" title="复制链接" @click="copyLink">🔗</button>
           <button class="icon-btn" :class="{ on: panel === 'comments' }" title="评论" @click="panel = panel === 'comments' ? null : 'comments'">💬</button>
           <button class="icon-btn" :class="{ on: panel === 'history' }" title="历史版本" @click="panel = panel === 'history' ? null : 'history'">🕘</button>
+          <div class="menu-anchor">
+            <button class="icon-btn" :class="{ on: transferMenu }" title="导入 / 导出" :disabled="exporting"
+                    @click="transferMenu = !transferMenu">{{ exporting ? '⏳' : '⇅' }}</button>
+            <div v-if="transferMenu" class="menu-popover" @mouseleave="transferMenu = false">
+              <button @click="exportPage(false)">导出为 Markdown（.md）</button>
+              <button v-if="hasChildren" @click="exportPage(true)">导出本页及子页面（.zip）</button>
+              <button v-if="page.myRole !== 'reader'" @click="transferMenu = false; importOpen = true">导入 Markdown 为子页面</button>
+            </div>
+          </div>
           <button v-if="page.myRole !== 'reader'" class="btn small" @click="createPage(router, page.spaceId, page.id)">＋ 子页面</button>
         </div>
       </header>
@@ -219,5 +254,6 @@ onBeforeRouteLeave(async () => {
 
     <CommentPanel v-if="panel === 'comments'" :page-id="page.id" :can-moderate="page.myRole === 'admin'" @close="panel = null" />
     <HistoryPanel v-if="panel === 'history'" :page-id="page.id" :can-restore="canEdit" @close="panel = null" @restored="onRestored" />
+    <ImportDialog v-if="importOpen" :space-id="page.spaceId" :parent="{ id: page.id, title }" @close="importOpen = false" />
   </div>
 </template>

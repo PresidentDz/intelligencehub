@@ -58,6 +58,39 @@ public class PageService {
         return id;
     }
 
+    /** A page to import together with its subpages. */
+    public record ImportNode(String title, String content, List<ImportNode> children) {}
+
+    /**
+     * Creates the given page trees under {@code parentId} (null = space root) in one
+     * transaction, so a failed import leaves nothing behind. Returns the ids of the top-level pages.
+     */
+    @Transactional
+    public List<Integer> importTree(int spaceId, Integer parentId, List<ImportNode> nodes, User user) {
+        List<Integer> ids = new ArrayList<>();
+        for (ImportNode node : nodes) {
+            int id = create(spaceId, parentId, node.title(), node.content(), user);
+            importTree(spaceId, id, node.children(), user);
+            ids.add(id);
+        }
+        return ids;
+    }
+
+    /**
+     * Pages with content for export: the whole space when {@code rootId} is null, otherwise
+     * that page and its descendants. Unlike the page detail endpoint, this records no visits.
+     */
+    public List<Map<String, Object>> exportTree(int spaceId, Integer rootId, User user) {
+        access.require(spaceId, user, Role.reader);
+        if (rootId == null)
+            return jdbc.queryForList("SELECT id,parent_id parentId,title,icon,content,position FROM pages WHERE space_id=? ORDER BY position,id", spaceId);
+        if (ref(rootId).spaceId() != spaceId) throw ApiException.notFound("页面不存在");
+        return jdbc.queryForList(
+                "WITH RECURSIVE t(id) AS (SELECT id FROM pages WHERE id=? UNION ALL SELECT p.id FROM pages p JOIN t ON p.parent_id=t.id)" +
+                        " SELECT p.id,p.parent_id parentId,p.title,p.icon,p.content,p.position FROM pages p JOIN t ON t.id=p.id ORDER BY p.position,p.id",
+                rootId);
+    }
+
     /**
      * Saves the page if {@code baseRevision} matches the stored revision, otherwise rejects
      * with 409 so the client can tell the user someone else changed the page.

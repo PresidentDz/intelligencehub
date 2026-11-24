@@ -3,6 +3,7 @@ package com.zhixu.kb.page;
 import com.zhixu.kb.auth.User;
 import com.zhixu.kb.common.ApiException;
 import com.zhixu.kb.common.Input;
+import com.zhixu.kb.page.PageService.ImportNode;
 import com.zhixu.kb.page.PageService.PageRef;
 import com.zhixu.kb.space.SpaceAccess;
 import com.zhixu.kb.space.SpaceAccess.Role;
@@ -10,6 +11,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -17,6 +19,8 @@ import java.util.Map;
 @RequestMapping("/api")
 public class PageController {
     private static final int MAX_CONTENT = 2_000_000;
+    private static final int MAX_IMPORT_PAGES = 2000;
+    private static final int MAX_IMPORT_DEPTH = 30;
 
     private final JdbcTemplate jdbc;
     private final PageService pages;
@@ -34,6 +38,40 @@ public class PageController {
         int id = pages.create(spaceId, Input.integerOrNull(body, "parentId"), Input.text(body, "title", 240).trim(),
                 Input.text(body, "content", MAX_CONTENT), user);
         return Map.of("id", id);
+    }
+
+    /** Body: {parentId, pages: [{title, content, children: [...]}]}, content already converted to HTML. */
+    @PostMapping("/spaces/{spaceId}/import")
+    @ResponseStatus(HttpStatus.CREATED)
+    Map<String, Object> importPages(@PathVariable int spaceId, @RequestBody Map<String, Object> body, User user) {
+        int[] budget = {MAX_IMPORT_PAGES};
+        List<ImportNode> nodes = importNodes(body.get("pages"), budget, 0);
+        if (nodes.isEmpty()) throw ApiException.badRequest("没有可导入的页面");
+        List<Integer> ids = pages.importTree(spaceId, Input.integerOrNull(body, "parentId"), nodes, user);
+        return Map.of("ids", ids, "count", MAX_IMPORT_PAGES - budget[0]);
+    }
+
+    @GetMapping("/spaces/{spaceId}/export")
+    Map<String, Object> exportPages(@PathVariable int spaceId, @RequestParam(required = false) Integer pageId, User user) {
+        return Map.of("pages", pages.exportTree(spaceId, pageId, user));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<ImportNode> importNodes(Object value, int[] budget, int depth) {
+        if (value == null) return List.of();
+        if (!(value instanceof List<?> list)) throw ApiException.badRequest("参数 pages 无效");
+        if (depth > MAX_IMPORT_DEPTH) throw ApiException.badRequest("目录层级不能超过 " + MAX_IMPORT_DEPTH + " 层");
+        List<ImportNode> nodes = new ArrayList<>();
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> raw)) throw ApiException.badRequest("参数 pages 无效");
+            if (--budget[0] < 0) throw ApiException.badRequest("一次最多导入 " + MAX_IMPORT_PAGES + " 个页面");
+            Map<String, Object> map = (Map<String, Object>) raw;
+            String title = Input.text(map, "title", 240).trim();
+            String content = Input.text(map, "content", MAX_CONTENT + 1);
+            if (content.length() > MAX_CONTENT) throw ApiException.badRequest("「" + title + "」内容过长，无法导入");
+            nodes.add(new ImportNode(title, content, importNodes(map.get("children"), budget, depth + 1)));
+        }
+        return nodes;
     }
 
     @GetMapping("/pages/{id}")
