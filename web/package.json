@@ -1,0 +1,32 @@
+{
+  "name": "zhixu-kb-web",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "typecheck": "vue-tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tiptap/extension-image": "^3.35.0",
+    "@tiptap/extension-list": "^3.35.0",
+    "@tiptap/extension-table": "^3.35.0",
+    "@tiptap/extensions": "^3.35.0",
+    "@tiptap/pm": "^3.35.0",
+    "@tiptap/starter-kit": "^3.35.0",
+    "@tiptap/suggestion": "^3.35.0",
+    "@tiptap/vue-3": "^3.35.0",
+    "pinia": "^4.1.0",
+    "vue": "^3.5.46",
+    "vue-router": "^5.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@vitejs/plugin-vue": "^6.0.11",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.8",
+    "vue-tsc": "^3.3.14"
+  }
+}

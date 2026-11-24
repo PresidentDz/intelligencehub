@@ -1,0 +1,8 @@
+target/
+.m2repo/
+*.log
+data/
+web/node_modules/
+web/dist/
+web/.env.local
+config/
