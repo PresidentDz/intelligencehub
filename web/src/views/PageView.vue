@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import { api, ApiError, errorMessage } from '../api'
 import { useSpaces } from '../stores/spaces'
-import type { PageDetail } from '../types'
+import type { Comment, CommentAnchor, PageDetail, TextAnchor } from '../types'
 import { SPACE_ROLE_LABEL } from '../types'
 import { fullTime, PAGE_ICONS, relativeTime, toast } from '../utils'
 import BlockEditor from '../editor/BlockEditor.vue'
@@ -23,6 +23,13 @@ const loadError = ref('')
 const title = ref('')
 const icon = ref('')
 const content = ref('')
+const commentAnchors = ref<CommentAnchor[]>([])
+const comments = ref<Comment[]>([])
+const selectionAnchor = ref<TextAnchor | null>(null)
+const selectionTop = ref<number | null>(null)
+const hasAnchoredComments = computed(() => comments.value.some((comment) =>
+  comment.anchorStart != null && comment.anchorEnd != null && !!comment.quote,
+))
 const status = ref<'saved' | 'dirty' | 'saving' | 'error' | 'conflict'>('saved')
 const panel = ref<'comments' | 'history' | null>(null)
 const iconPicker = ref(false)
@@ -31,6 +38,49 @@ const transferMenu = ref(false)
 const importOpen = ref(false)
 const exporting = ref(false)
 const hasChildren = computed(() => spaces.pages.some((p) => p.parentId === Number(props.pageId)))
+
+function onCommentSelection(anchor: TextAnchor) {
+  selectionAnchor.value = anchor
+  panel.value = 'comments'
+  void updateSelectionTop()
+}
+
+function onCommentClick(commentId: number) {
+  const comment = comments.value.find((item) => item.id === commentId)
+  if (!comment || comment.anchorStart == null || comment.anchorEnd == null || !comment.quote) return
+  selectionAnchor.value = { start: comment.anchorStart, end: comment.anchorEnd, quote: comment.quote }
+  panel.value = 'comments'
+  void updateSelectionTop()
+}
+
+async function updateSelectionTop() {
+  await nextTick()
+  if (selectionAnchor.value) selectionTop.value = editorRef.value?.anchorTop(selectionAnchor.value) ?? null
+}
+
+function onCommentsLoaded(loadedComments: Comment[]) {
+  comments.value = loadedComments
+  commentAnchors.value = loadedComments.flatMap((comment) =>
+    comment.anchorStart != null && comment.anchorEnd != null && comment.quote
+      ? [{ id: comment.id, start: comment.anchorStart, end: comment.anchorEnd, quote: comment.quote }]
+      : [],
+  )
+}
+
+function selectCommentAnchor(anchor: TextAnchor) {
+  editorRef.value?.focusAnchor(anchor)
+}
+
+function closeComments() {
+  panel.value = null
+  selectionAnchor.value = null
+  selectionTop.value = null
+}
+
+function toggleComments() {
+  if (panel.value === 'comments') closeComments()
+  else if (hasAnchoredComments.value) panel.value = 'comments'
+}
 
 /** Exports this page as .md, or with its subpages as a .zip. Pending edits are saved first. */
 async function exportPage(withChildren: boolean) {
@@ -75,6 +125,13 @@ async function load() {
     title.value = data.page.title
     icon.value = data.page.icon
     content.value = data.page.content
+    commentAnchors.value = []
+    try {
+      const commentsData = await api.get<{ comments: Comment[] }>(`/pages/${props.pageId}/comments`)
+      onCommentsLoaded(commentsData.comments)
+    } catch (e) {
+      toast(errorMessage(e), 'error')
+    }
     status.value = 'saved'
     document.title = `${data.page.title || '无标题'} · 知序`
   } catch (e) {
@@ -203,17 +260,17 @@ onBeforeRouteLeave(async () => {
         <nav class="breadcrumb ellipsis">
           <RouterLink :to="{ name: 'space', params: { spaceId: page.spaceId } }">{{ page.spaceIcon }} {{ page.spaceName }}</RouterLink>
           <template v-for="a in page.ancestors" :key="a.id">
-            <span class="crumb-sep">/</span>
+            <span class="crumb-sep">&gt;</span>
             <RouterLink :to="{ name: 'page', params: { spaceId: page.spaceId, pageId: a.id } }">{{ a.title || '无标题' }}</RouterLink>
           </template>
-          <span class="crumb-sep">/</span><span>{{ title || '无标题' }}</span>
+          <span class="crumb-sep">&gt;</span><span>{{ title || '无标题' }}</span>
         </nav>
         <div class="header-actions">
           <span class="save-status" :class="status" :title="fullTime(page.updatedAt)">{{ statusText }}</span>
           <span v-if="page.myRole === 'reader'" class="badge">{{ SPACE_ROLE_LABEL.reader }}</span>
           <button class="icon-btn" :title="page.favorite ? '取消收藏' : '收藏'" @click="toggleFavorite">{{ page.favorite ? '⭐' : '☆' }}</button>
           <button class="icon-btn" title="复制链接" @click="copyLink">🔗</button>
-          <button class="icon-btn" :class="{ on: panel === 'comments' }" title="评论" @click="panel = panel === 'comments' ? null : 'comments'">💬</button>
+          <button class="icon-btn" :class="{ on: panel === 'comments' }" title="评论" @click="toggleComments">💬</button>
           <button class="icon-btn" :class="{ on: panel === 'history' }" title="历史版本" @click="panel = panel === 'history' ? null : 'history'">🕘</button>
           <div class="menu-anchor">
             <button class="icon-btn" :class="{ on: transferMenu }" title="导入 / 导出" :disabled="exporting"
@@ -233,7 +290,7 @@ onBeforeRouteLeave(async () => {
         <button class="btn small" @click="load">加载最新内容</button>
       </div>
 
-      <div class="page-scroll">
+      <div class="page-scroll" @scroll="updateSelectionTop">
         <article class="doc">
           <div class="doc-icon-row">
             <button class="doc-icon" :class="{ empty: !icon }" :disabled="!canEdit" @click="iconPicker = !iconPicker">
@@ -247,12 +304,17 @@ onBeforeRouteLeave(async () => {
           <textarea class="doc-title-input" :value="title" :readonly="!canEdit" rows="1" maxlength="240"
                     placeholder="无标题" @input="onTitle" @keydown="onTitleKey" />
           <p class="doc-meta muted tiny">{{ page.createdBy }} 创建于 {{ fullTime(page.createdAt) }} · {{ page.updatedBy }} 最后编辑</p>
-          <BlockEditor ref="editorRef" :content="content" :editable="canEdit" @update="onContent" />
+          <BlockEditor ref="editorRef" :content="content" :editable="canEdit" :comment-anchors="commentAnchors"
+                       @update="onContent" @comment-selection="onCommentSelection" @comment-click="onCommentClick" />
+          <CommentPanel mode="section" :page-id="page.id" :can-moderate="page.myRole === 'admin'" :anchor="null" :comments="comments"
+                        @comments-loaded="onCommentsLoaded" @select-anchor="selectCommentAnchor" />
         </article>
       </div>
     </div>
 
-    <CommentPanel v-if="panel === 'comments'" :page-id="page.id" :can-moderate="page.myRole === 'admin'" @close="panel = null" />
+    <CommentPanel v-if="panel === 'comments' && (hasAnchoredComments || selectionAnchor)" mode="anchor" :page-id="page.id" :can-moderate="page.myRole === 'admin'" :anchor="selectionAnchor" :anchor-top="selectionTop" :comments="comments"
+                  @close="closeComments" @comments-loaded="onCommentsLoaded" @anchor-created="selectionAnchor = null"
+                  @select-anchor="selectCommentAnchor" />
     <HistoryPanel v-if="panel === 'history'" :page-id="page.id" :can-restore="canEdit" @close="panel = null" @restored="onRestored" />
     <ImportDialog v-if="importOpen" :space-id="page.spaceId" :parent="{ id: page.id, title }" @close="importOpen = false" />
   </div>

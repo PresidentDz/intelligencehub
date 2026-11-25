@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { onBeforeUnmount, watch } from 'vue'
+import { Extension } from '@tiptap/core'
+import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { EditorContent, useEditor, type Editor } from '@tiptap/vue-3'
 import { BubbleMenu } from '@tiptap/vue-3/menus'
 import { Placeholder } from '@tiptap/extensions'
@@ -8,9 +11,60 @@ import { toast } from '../utils'
 import { pickImage } from './commands'
 import { SlashCommands } from './slashCommands'
 import { schemaExtensions } from './schema'
+import type { CommentAnchor, TextAnchor } from '../types'
 
-const props = defineProps<{ content: string; editable: boolean }>()
-const emit = defineEmits<{ update: [html: string] }>()
+const props = defineProps<{ content: string; editable: boolean; commentAnchors?: CommentAnchor[] }>()
+const emit = defineEmits<{ update: [html: string]; commentSelection: [anchor: TextAnchor]; commentClick: [commentId: number] }>()
+
+const commentAnchorsKey = new PluginKey<DecorationSet>('commentAnchors')
+
+function resolveAnchor(doc: Parameters<typeof DecorationSet.create>[0], anchor: TextAnchor): TextAnchor | null {
+  if (anchor.start >= 1 && anchor.end > anchor.start && anchor.end <= doc.content.size &&
+      doc.textBetween(anchor.start, anchor.end, '\n', '\n') === anchor.quote) return anchor
+
+  const matches: TextAnchor[] = []
+  doc.descendants((node, pos) => {
+    if (!node.isTextblock || !anchor.quote) return
+    const text = node.textBetween(0, node.content.size, '\n', '\n')
+    let index = text.indexOf(anchor.quote)
+    while (index >= 0) {
+      matches.push({ start: pos + 1 + index, end: pos + 1 + index + anchor.quote.length, quote: anchor.quote })
+      index = text.indexOf(anchor.quote, index + 1)
+    }
+  })
+  return matches.sort((a, b) => Math.abs(a.start - anchor.start) - Math.abs(b.start - anchor.start))[0] ?? null
+}
+
+const CommentAnchors = Extension.create({
+  name: 'commentAnchors',
+  addProseMirrorPlugins() {
+    return [new Plugin<DecorationSet>({
+      key: commentAnchorsKey,
+      state: {
+        init: () => DecorationSet.empty,
+        apply(transaction, decorations) {
+          const anchors = transaction.getMeta(commentAnchorsKey) as CommentAnchor[] | undefined
+          if (anchors) {
+            const ranges = anchors.flatMap((anchor) => {
+              const range = resolveAnchor(transaction.doc, anchor)
+              return range ? [Decoration.inline(range.start, range.end, {
+                class: 'comment-anchor',
+                'data-comment-id': String(anchor.id),
+              })] : []
+            })
+            return DecorationSet.create(transaction.doc, ranges)
+          }
+          return decorations.map(transaction.mapping, transaction.doc)
+        },
+      },
+      props: {
+        decorations(state) {
+          return commentAnchorsKey.getState(state) ?? DecorationSet.empty
+        },
+      },
+    })]
+  },
+})
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
 
@@ -36,6 +90,7 @@ const editor = useEditor({
   editable: props.editable,
   extensions: [
     ...schemaExtensions,
+    CommentAnchors,
     Placeholder.configure({
       placeholder: ({ node }) => (node.type.name === 'heading' ? '标题' : '输入 / 插入内容块'),
     }),
@@ -43,6 +98,16 @@ const editor = useEditor({
   ],
   editorProps: {
     attributes: { class: 'doc-body', spellcheck: 'false' },
+    handleClick: (_view, _pos, event) => {
+      const eventTarget = event.target
+      const target = eventTarget instanceof Element ? eventTarget : eventTarget instanceof Node ? eventTarget.parentElement : null
+      if (!target) return false
+      const marker = target.closest<HTMLElement>('[data-comment-id]')
+      if (!marker) return false
+      const commentId = Number(marker.dataset.commentId)
+      if (Number.isFinite(commentId)) emit('commentClick', commentId)
+      return false
+    },
     handlePaste: (_view, event) => {
       const files = Array.from(event.clipboardData?.files ?? [])
       if (!files.some((f) => IMAGE_TYPES.includes(f.type)) || !editor.value) return false
@@ -58,9 +123,13 @@ const editor = useEditor({
     },
   },
   onUpdate: ({ editor }) => emit('update', editor.getHTML()),
+  onCreate: ({ editor }) => editor.view.dispatch(editor.state.tr.setMeta(commentAnchorsKey, props.commentAnchors ?? [])),
 })
 
 watch(() => props.editable, (value) => editor.value?.setEditable(value))
+watch(() => props.commentAnchors, (anchors) => {
+  if (editor.value) editor.value.view.dispatch(editor.value.state.tr.setMeta(commentAnchorsKey, anchors ?? []))
+}, { deep: true })
 
 // Content is replaced from outside only when another version is loaded (restore, reload).
 watch(() => props.content, (html) => {
@@ -82,7 +151,31 @@ function focusEnd() {
   editor.value?.commands.focus('end')
 }
 
-defineExpose({ focusEnd })
+function commentSelection() {
+  if (!editor.value) return
+  const { from, to, empty } = editor.value.state.selection
+  if (empty) return
+  const quote = editor.value.state.doc.textBetween(from, to, '\n', '\n')
+  if (!quote.trim()) return
+  emit('commentSelection', { start: from, end: to, quote })
+}
+
+function focusAnchor(anchor: TextAnchor) {
+  if (!editor.value) return
+  const range = resolveAnchor(editor.value.state.doc, anchor)
+  if (!range) return
+  editor.value.view.dispatch(editor.value.state.tr.setSelection(TextSelection.create(editor.value.state.doc, range.start, range.end)))
+  editor.value.commands.focus()
+}
+
+function anchorTop(anchor: TextAnchor): number | null {
+  if (!editor.value) return null
+  const range = resolveAnchor(editor.value.state.doc, anchor)
+  if (!range) return null
+  return editor.value.view.coordsAtPos(range.start).top
+}
+
+defineExpose({ focusEnd, focusAnchor, anchorTop })
 </script>
 
 <template>
@@ -99,6 +192,11 @@ defineExpose({ focusEnd })
       <button :class="{ on: editor.isActive('strike') }" title="删除线" @click="editor.chain().focus().toggleStrike().run()"><s>S</s></button>
       <button :class="{ on: editor.isActive('code') }" title="行内代码" @click="editor.chain().focus().toggleCode().run()">&lt;/&gt;</button>
       <button :class="{ on: editor.isActive('link') }" title="链接" @click="setLink">🔗</button>
+      <button title="评论选中内容" @mousedown.prevent="commentSelection">💬 评论</button>
+    </BubbleMenu>
+    <BubbleMenu v-if="editor && !editable" :editor="editor" class="bubble-menu"
+                :should-show="({ editor: ed, state }) => !state.selection.empty && !ed.isActive('image') && !ed.isActive('codeBlock')">
+      <button title="评论选中内容" @mousedown.prevent="commentSelection">💬 评论</button>
     </BubbleMenu>
 
     <div v-if="editor && editable && editor.isActive('table')" class="table-tools">

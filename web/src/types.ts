@@ -74,10 +74,26 @@ export interface Version {
 
 export interface Comment {
   id: number
+  parentId: number | null
   body: string
   createdAt: string
   userId: number
   author: string
+  anchorStart: number | null
+  anchorEnd: number | null
+  quote: string | null
+  mentions?: DirectoryUser[]
+  replies?: Comment[]
+}
+
+export interface TextAnchor {
+  start: number
+  end: number
+  quote: string
+}
+
+export interface CommentAnchor extends TextAnchor {
+  id: number
 }
 
 export interface DirectoryUser {

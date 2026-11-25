@@ -9,11 +9,16 @@ import com.zhixu.kb.space.SpaceAccess;
 import com.zhixu.kb.space.SpaceAccess.Role;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api")
@@ -140,19 +145,132 @@ public class PageController {
     @GetMapping("/pages/{id}/comments")
     Map<String, Object> comments(@PathVariable int id, User user) {
         pages.require(id, user, Role.reader);
-        return Map.of("comments", jdbc.queryForList(
-                "SELECT c.id,c.body,c.created_at createdAt,c.user_id userId,u.name author FROM comments c JOIN users u ON u.id=c.user_id" +
-                        " WHERE c.page_id=? ORDER BY c.id", id));
+        List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT c.id,c.parent_id parentId,c.body,c.created_at createdAt,c.user_id userId,u.name author," +
+                        "a.anchor_start anchorStart,a.anchor_end anchorEnd,a.quote FROM comments c JOIN users u ON u.id=c.user_id" +
+                        " LEFT JOIN comment_anchors a ON a.comment_id=c.id" +
+                        " WHERE c.page_id=? ORDER BY c.id", id);
+        List<Map<String, Object>> result = rows.stream().map(LinkedHashMap::new).map(row -> (Map<String, Object>) row).toList();
+        if (!result.isEmpty()) {
+            List<Integer> commentIds = result.stream().map(row -> ((Number) row.get("id")).intValue()).toList();
+            String placeholders = String.join(",", java.util.Collections.nCopies(commentIds.size(), "?"));
+            List<Map<String, Object>> mentionRows = jdbc.queryForList(
+                    "SELECT m.comment_id commentId,u.id,u.username,u.name,u.department FROM comment_mentions m" +
+                            " JOIN users u ON u.id=m.user_id WHERE m.comment_id IN (" + placeholders + ") ORDER BY u.name",
+                    commentIds.toArray());
+            Map<Integer, List<Map<String, Object>>> mentionsByComment = new HashMap<>();
+            for (Map<String, Object> mention : mentionRows) {
+                int commentId = ((Number) mention.get("commentId")).intValue();
+                Map<String, Object> userInfo = new LinkedHashMap<>(mention);
+                userInfo.remove("commentId");
+                mentionsByComment.computeIfAbsent(commentId, ignored -> new ArrayList<>()).add(userInfo);
+            }
+            for (Map<String, Object> comment : result)
+                comment.put("mentions", mentionsByComment.getOrDefault(((Number) comment.get("id")).intValue(), List.of()));
+        }
+        Map<Integer, Map<String, Object>> commentsById = new HashMap<>();
+        for (Map<String, Object> comment : result) {
+            comment.put("replies", new ArrayList<Map<String, Object>>());
+            commentsById.put(((Number) comment.get("id")).intValue(), comment);
+        }
+        List<Map<String, Object>> roots = new ArrayList<>();
+        for (Map<String, Object> comment : result) {
+            Number parentId = (Number) comment.get("parentId");
+            if (parentId == null) roots.add(comment);
+            else {
+                Map<String, Object> parent = commentsById.get(parentId.intValue());
+                if (parent != null) ((List<Map<String, Object>>) parent.get("replies")).add(comment);
+            }
+        }
+        return Map.of("comments", roots);
     }
 
     /** Readers can comment, like in the previous version. */
     @PostMapping("/pages/{id}/comments")
     @ResponseStatus(HttpStatus.CREATED)
+    @Transactional
     Map<String, Object> addComment(@PathVariable int id, @RequestBody Map<String, Object> body, User user) {
         pages.require(id, user, Role.reader);
         String text = Input.text(body, "body", 3000).trim();
         if (text.isEmpty()) throw ApiException.badRequest("评论不能为空且不超过 3000 字");
-        jdbc.update("INSERT INTO comments(page_id,user_id,body) VALUES(?,?,?)", id, user.id(), text);
+        Integer parentId = Input.integerOrNull(body, "parentId");
+        if (parentId != null) {
+            Integer validParent = jdbc.query("SELECT id FROM comments WHERE id=? AND page_id=?",
+                    rs -> rs.next() ? rs.getInt(1) : null, parentId, id);
+            if (validParent == null) throw ApiException.badRequest("回复的评论不存在");
+        }
+        jdbc.update("INSERT INTO comments(page_id,user_id,parent_id,body) VALUES(?,?,?,?)", id, user.id(), parentId, text);
+        Integer commentId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Integer.class);
+        Object anchorValue = body.get("anchor");
+        if (anchorValue instanceof Map<?, ?> anchor) {
+            Map<String, Object> anchorBody = new java.util.HashMap<>();
+            anchor.forEach((key, value) -> {
+                if (key instanceof String name) anchorBody.put(name, value);
+            });
+            Integer start = Input.integerOrNull(anchorBody, "start");
+            Integer end = Input.integerOrNull(anchorBody, "end");
+            Object quoteValue = anchorBody.get("quote");
+            String quote = quoteValue == null ? "" : String.valueOf(quoteValue).trim();
+            if (start == null || end == null || start < 1 || end <= start || quote.isEmpty() || quote.length() > 5000)
+                throw ApiException.badRequest("选中内容无效或过长");
+            jdbc.update("INSERT INTO comment_anchors(comment_id,anchor_start,anchor_end,quote) VALUES(?,?,?,?)",
+                    commentId, start, end, quote);
+        } else if (anchorValue != null) {
+            throw ApiException.badRequest("评论锚点无效");
+        }
+        Object mentionsValue = body.get("mentions");
+        if (mentionsValue != null) {
+            if (!(mentionsValue instanceof List<?> mentions)) throw ApiException.badRequest("@用户列表无效");
+            Set<Integer> mentionIds = new LinkedHashSet<>();
+            for (Object value : mentions) {
+                if (!(value instanceof Number number) || number.intValue() < 1)
+                    throw ApiException.badRequest("@用户列表无效");
+                mentionIds.add(number.intValue());
+            }
+            if (!mentionIds.isEmpty()) {
+                String placeholders = String.join(",", java.util.Collections.nCopies(mentionIds.size(), "?"));
+                List<Integer> activeUsers = jdbc.queryForList(
+                        "SELECT id FROM users WHERE active=1 AND id IN (" + placeholders + ")",
+                        Integer.class, mentionIds.toArray());
+                if (activeUsers.size() != mentionIds.size()) throw ApiException.badRequest("@用户已不存在或已停用");
+                for (Integer mentionId : mentionIds)
+                    jdbc.update("INSERT INTO comment_mentions(comment_id,user_id) VALUES(?,?)", commentId, mentionId);
+            }
+        }
+        return Map.of("ok", true);
+    }
+
+    @PutMapping("/comments/{commentId}")
+    @Transactional
+    Map<String, Object> updateComment(@PathVariable int commentId, @RequestBody Map<String, Object> body, User user) {
+        List<Map<String, Object>> rows = jdbc.queryForList("SELECT page_id,user_id FROM comments WHERE id=?", commentId);
+        if (rows.isEmpty()) throw ApiException.notFound("璇勮涓嶅瓨鍦?");
+        int pageId = ((Number) rows.get(0).get("page_id")).intValue();
+        boolean own = ((Number) rows.get(0).get("user_id")).intValue() == user.id();
+        pages.require(pageId, user, own ? Role.reader : Role.admin);
+        String text = Input.text(body, "body", 3000).trim();
+        if (text.isEmpty()) throw ApiException.badRequest("璇勮涓嶈兘涓虹┖涓斾笉瓒呰繃 3000 瀛?");
+        jdbc.update("UPDATE comments SET body=? WHERE id=?", text, commentId);
+        if (body.containsKey("mentions")) {
+            Object mentionsValue = body.get("mentions");
+            if (!(mentionsValue instanceof List<?> mentions)) throw ApiException.badRequest("@鐢ㄦ埛鍒楄〃鏃犳晥");
+            Set<Integer> mentionIds = new LinkedHashSet<>();
+            for (Object value : mentions) {
+                if (!(value instanceof Number number) || number.intValue() < 1)
+                    throw ApiException.badRequest("@鐢ㄦ埛鍒楄〃鏃犳晥");
+                mentionIds.add(number.intValue());
+            }
+            if (!mentionIds.isEmpty()) {
+                String placeholders = String.join(",", java.util.Collections.nCopies(mentionIds.size(), "?"));
+                List<Integer> activeUsers = jdbc.queryForList(
+                        "SELECT id FROM users WHERE active=1 AND id IN (" + placeholders + ")",
+                        Integer.class, mentionIds.toArray());
+                if (activeUsers.size() != mentionIds.size()) throw ApiException.badRequest("@鐢ㄦ埛宸蹭笉瀛樺湪鎴栧凡鍋滅敤");
+            }
+            jdbc.update("DELETE FROM comment_mentions WHERE comment_id=?", commentId);
+            for (Integer mentionId : mentionIds)
+                jdbc.update("INSERT INTO comment_mentions(comment_id,user_id) VALUES(?,?)", commentId, mentionId);
+        }
         return Map.of("ok", true);
     }
 

@@ -84,11 +84,30 @@ CREATE TABLE IF NOT EXISTS comments(
   id INT AUTO_INCREMENT PRIMARY KEY,
   page_id INT NOT NULL,
   user_id INT NOT NULL,
+  parent_id INT NULL,
   body TEXT NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY comments_page (page_id, id),
+  KEY comments_parent (parent_id),
   CONSTRAINT comments_page FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE,
-  CONSTRAINT comments_user FOREIGN KEY (user_id) REFERENCES users(id)
+  CONSTRAINT comments_user FOREIGN KEY (user_id) REFERENCES users(id),
+  CONSTRAINT comments_parent FOREIGN KEY (parent_id) REFERENCES comments(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS comment_anchors(
+  comment_id INT PRIMARY KEY,
+  anchor_start INT NOT NULL,
+  anchor_end INT NOT NULL,
+  quote TEXT NOT NULL,
+  CONSTRAINT comment_anchors_comment FOREIGN KEY (comment_id) REFERENCES comments(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS comment_mentions(
+  comment_id INT NOT NULL,
+  user_id INT NOT NULL,
+  PRIMARY KEY (comment_id, user_id),
+  CONSTRAINT comment_mentions_comment FOREIGN KEY (comment_id) REFERENCES comments(id) ON DELETE CASCADE,
+  CONSTRAINT comment_mentions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS favorites(
