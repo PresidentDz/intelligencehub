@@ -367,7 +367,7 @@ async function saveEdit(c: Comment) {
         </form>
       </div>
       <p v-if="!visibleComments.length && mode === 'anchor'" class="muted pad">还没有选中内容的评论</p>
-      <p v-if="!visibleComments.length && mode === 'section'" class="muted pad">还没有普通评论</p>
+      <p v-if="!visibleComments.length && mode === 'section'" class="muted pad article-comment-empty">还没评论</p>
       <form v-if="mode === 'anchor' && anchor && replyingToId == null" class="comment-form comment-anchor-form" :style="{ top: `${composerTop}px` }" @submit.prevent="submit">
         <p class="comment-quote active">对选中内容评论：“{{ anchor.quote }}”</p>
         <div class="mention-input-wrap">

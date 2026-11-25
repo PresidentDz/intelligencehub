@@ -108,7 +108,8 @@ public class PageController {
     @PostMapping("/pages/{id}/move")
     Map<String, Object> move(@PathVariable int id, @RequestBody Map<String, Object> body, User user) {
         Integer index = Input.integerOrNull(body, "index");
-        pages.move(id, Input.integerOrNull(body, "parentId"), index == null ? Integer.MAX_VALUE : index, user);
+        pages.move(id, Input.integerOrNull(body, "parentId"), index == null ? Integer.MAX_VALUE : index,
+                Input.integerOrNull(body, "targetSpaceId"), user);
         return Map.of("ok", true);
     }
 

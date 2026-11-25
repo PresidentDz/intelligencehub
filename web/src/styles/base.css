@@ -104,6 +104,7 @@ mark { background: #fff3b0; color: inherit; border-radius: 2px; }
 .section-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 4px; font-size: 12px; color: var(--text-3); }
 .space-item .space-icon { width: 18px; text-align: center; }
 .space-item .lock { margin-left: auto; font-size: 11px; opacity: 0.6; }
+.space-item.space-drop-target { outline: 1px dashed var(--primary); background: var(--primary-soft); }
 .sidebar-user { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--line-soft); }
 .user-meta { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
@@ -112,6 +113,8 @@ mark { background: #fff3b0; color: inherit; border-radius: 2px; }
 /* Page tree */
 .page-tree { margin: 2px 0 6px; }
 .tree-row { position: relative; display: flex; align-items: center; height: 30px; padding-right: 4px; border-radius: var(--radius); }
+.tree-row[draggable="true"] { cursor: grab; }
+.tree-row[draggable="true"]:active { cursor: grabbing; }
 .tree-row:hover { background: var(--hover); }
 .tree-row.active { background: var(--primary-soft); }
 .tree-row.active .tree-link { color: var(--primary); font-weight: 500; }
@@ -267,6 +270,7 @@ button.comment-quote { cursor: pointer; }
 .article-comment-section { margin-top: 40px; padding-top: 22px; border-top: 1px solid var(--line); }
 .article-comment-title { margin: 0 0 14px; font-size: 20px; }
 .article-comment-list { display: flex; flex-direction: column; gap: 10px; }
+.article-comment-empty { width: 100%; padding: 24px 0; text-align: center; }
 .comment-module-card.article-comment-card { position: relative; inset: auto; padding: 12px 14px; border: 1px solid transparent; background: transparent; box-shadow: none; transition: background .15s ease, box-shadow .15s ease; }
 .comment-module-card.article-comment-card:hover, .comment-module-card.article-comment-card:focus-within { border-color: var(--line-soft); background: #fff; box-shadow: 0 2px 8px rgba(31, 35, 41, 0.08); }
 .article-comment-card .comment-actions { opacity: 0; pointer-events: none; transition: opacity .15s ease; }

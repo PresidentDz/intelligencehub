@@ -30,6 +30,13 @@ const selectionTop = ref<number | null>(null)
 const hasAnchoredComments = computed(() => comments.value.some((comment) =>
   comment.anchorStart != null && comment.anchorEnd != null && !!comment.quote,
 ))
+const hasFullTextComments = computed(() => comments.value.some((comment) =>
+  comment.anchorStart == null && comment.anchorEnd == null && !comment.quote,
+))
+const hasDocumentContent = computed(() =>
+  /<(?:img|table|video|audio|iframe)\b/i.test(content.value) ||
+  content.value.replace(/<[^>]*>/g, '').replace(/&nbsp;|&#160;/gi, ' ').trim().length > 0,
+)
 const status = ref<'saved' | 'dirty' | 'saving' | 'error' | 'conflict'>('saved')
 const panel = ref<'comments' | 'history' | null>(null)
 const iconPicker = ref(false)
@@ -306,7 +313,7 @@ onBeforeRouteLeave(async () => {
           <p class="doc-meta muted tiny">{{ page.createdBy }} 创建于 {{ fullTime(page.createdAt) }} · {{ page.updatedBy }} 最后编辑</p>
           <BlockEditor ref="editorRef" :content="content" :editable="canEdit" :comment-anchors="commentAnchors"
                        @update="onContent" @comment-selection="onCommentSelection" @comment-click="onCommentClick" />
-          <CommentPanel mode="section" :page-id="page.id" :can-moderate="page.myRole === 'admin'" :anchor="null" :comments="comments"
+          <CommentPanel v-if="hasDocumentContent || hasFullTextComments" mode="section" :page-id="page.id" :can-moderate="page.myRole === 'admin'" :anchor="null" :comments="comments"
                         @comments-loaded="onCommentsLoaded" @select-anchor="selectCommentAnchor" />
         </article>
       </div>

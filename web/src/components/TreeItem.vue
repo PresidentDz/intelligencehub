@@ -22,8 +22,16 @@ function toggle() {
 
 function onDragStart(e: DragEvent) {
   drag.id = props.node.id
+  drag.overId = null
+  drag.zone = null
   e.dataTransfer?.setData('text/plain', String(props.node.id))
   if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+}
+
+function onDragEnd() {
+  drag.id = null
+  drag.overId = null
+  drag.zone = null
 }
 
 function onDragOver(e: DragEvent) {
@@ -33,8 +41,13 @@ function onDragOver(e: DragEvent) {
   drag.zone = zoneFor(e)
 }
 
-function onDragLeave() {
-  if (drag.overId === props.node.id) drag.overId = null
+function onDragLeave(e: DragEvent) {
+  const current = e.currentTarget as HTMLElement
+  if (e.relatedTarget instanceof Node && current.contains(e.relatedTarget)) return
+  if (drag.overId === props.node.id) {
+    drag.overId = null
+    drag.zone = null
+  }
 }
 
 function onDrop(e: DragEvent) {
@@ -61,7 +74,8 @@ async function remove() {
 <template>
   <div class="tree-item">
     <div class="tree-row" :class="[{ active }, dropClass]" :style="{ paddingLeft: 8 + depth * 16 + 'px' }"
-         :draggable="canEdit" @dragstart="onDragStart" @dragend="drag.id = drag.overId = null"
+         :draggable="canEdit" :title="canEdit ? '拖动以调整层级：拖到页面中间设为子页面，拖到上下边缘调整顺序' : undefined"
+         @dragstart="onDragStart" @dragend="onDragEnd"
          @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
       <button class="caret" :class="{ open, hidden: !node.children.length }" :tabindex="node.children.length ? 0 : -1"
               :aria-label="open ? '收起' : '展开'" @click.stop="toggle">▸</button>

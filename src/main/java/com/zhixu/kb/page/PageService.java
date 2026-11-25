@@ -121,7 +121,19 @@ public class PageService {
     /** Moves a page under {@code parentId} (null = space root) at sibling {@code index}. */
     @Transactional
     public void move(int pageId, Integer parentId, int index, User user) {
+        move(pageId, parentId, index, null, user);
+    }
+
+    @Transactional
+    public void move(int pageId, Integer parentId, int index, Integer targetSpaceId, User user) {
         PageRef page = require(pageId, user, Role.editor);
+        int destinationSpaceId = targetSpaceId == null ? page.spaceId() : targetSpaceId;
+        if (destinationSpaceId != page.spaceId()) {
+            access.require(destinationSpaceId, user, Role.editor);
+            if (parentId != null) throw ApiException.badRequest("跨空间移动只能移动到目标空间根目录");
+            moveAcrossSpaces(page, destinationSpaceId, user);
+            return;
+        }
         if (parentId != null) {
             if (ref(parentId).spaceId() != page.spaceId()) throw ApiException.badRequest("只能在同一空间内移动");
             for (Integer cursor = parentId; cursor != null; cursor = ref(cursor).parentId())
@@ -134,6 +146,21 @@ public class PageService {
         jdbc.update("UPDATE pages SET parent_id=? WHERE id=?", parentId, pageId);
         for (int i = 0; i < siblings.size(); i++)
             jdbc.update("UPDATE pages SET position=? WHERE id=?", i, siblings.get(i));
+    }
+
+    private void moveAcrossSpaces(PageRef page, int targetSpaceId, User user) {
+        int position = jdbc.queryForObject("SELECT position FROM pages WHERE id=?", Integer.class, page.id());
+        int targetPosition = jdbc.queryForObject("SELECT COALESCE(MAX(position),-1)+1 FROM pages WHERE space_id=? AND parent_id IS NULL",
+                Integer.class, targetSpaceId);
+        jdbc.update("UPDATE pages SET position=position-1 WHERE space_id=? AND parent_id <=> ? AND position>?",
+                page.spaceId(), page.parentId(), position);
+        jdbc.update("WITH RECURSIVE subtree(id) AS (" +
+                        "SELECT id FROM pages WHERE id=? UNION ALL " +
+                        "SELECT child.id FROM pages child JOIN subtree parent ON child.parent_id=parent.id) " +
+                        "UPDATE pages page JOIN subtree ON subtree.id=page.id " +
+                        "SET page.space_id=?,page.parent_id=IF(page.id=?,NULL,page.parent_id),page.position=IF(page.id=?, ?,page.position)," +
+                        "page.revision=page.revision+1,page.updated_by=?,page.updated_at=CURRENT_TIMESTAMP",
+                page.id(), targetSpaceId, page.id(), page.id(), targetPosition, user.id());
     }
 
     /**

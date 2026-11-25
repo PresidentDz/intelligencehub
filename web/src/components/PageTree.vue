@@ -20,6 +20,11 @@ watch(() => [route.params.pageId, spaces.pages] as const, ([pageId]) => {
   if (pageId) spaces.expandTo(Number(pageId))
 }, { immediate: true })
 
+function onRootDragLeave(e: DragEvent) {
+  if (e.relatedTarget instanceof Node && (e.currentTarget as HTMLElement).contains(e.relatedTarget)) return
+  rootOver.value = false
+}
+
 function onRootDrop(e: DragEvent) {
   e.preventDefault()
   rootOver.value = false
@@ -31,7 +36,7 @@ function onRootDrop(e: DragEvent) {
   <div class="page-tree">
     <TreeItem v-for="node in roots" :key="node.id" :node="node" :space-id="space.id" :depth="1" :can-edit="canEdit" />
     <div v-if="canEdit" class="tree-root-drop" :class="{ over: rootOver && drag.id != null }"
-         @dragover.prevent="rootOver = true" @dragleave="rootOver = false" @drop="onRootDrop">
+         @dragover.prevent="rootOver = true" @dragleave="onRootDragLeave" @drop="onRootDrop">
       <button class="tree-new" @click="createPage(router, space.id, null)">＋ 新建页面</button>
     </div>
     <p v-else-if="!roots.length" class="muted tiny pad-tree">空间里还没有页面</p>
